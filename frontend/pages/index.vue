@@ -37,7 +37,7 @@
       </div>
 
       <div class="diff-controls">
-        <label>差异阈值:</label>
+        <label>Diff Threshold:</label>
         <input type="range" v-model="diffThreshold" min="0" max="100" step="1" />
         <span>{{ diffThreshold }}%</span>
         <button @click="generateDiff" class="diff-button">ReGenerate</button>
@@ -51,7 +51,7 @@
         </div>
         <div class="image-wrapper">
           <img v-if="imageA" :src="imageA" alt="Build A Screenshot" class="comparison-image" />
-          <div v-else class="placeholder">choosing image A</div>
+          <div v-else class="placeholder">Choose image A</div>
         </div>
       </div>
 
@@ -59,8 +59,8 @@
         <div class="column-header">
           <h3>Diff</h3>
           <div v-if="diffStats" class="diff-stats">
-            <span>差异像素: {{ diffStats.differentPixels }}</span>
-            <span>差异比例: {{ diffStats.percentage.toFixed(2) }}%</span>
+            <span>Diff Pixel: {{ diffStats.differentPixels }}</span>
+            <span>Diff Percentage: {{ diffStats.percentage.toFixed(2) }}%</span>
           </div>
         </div>
         <div class="image-wrapper">
@@ -69,21 +69,19 @@
         </div>
       </div>
 
-      <!-- 右侧对比图 -->
       <div class="column">
         <div class="column-header">
           <h3>Build {{ selectedBuild }}</h3>
         </div>
         <div class="image-wrapper">
           <img v-if="imageB" :src="imageB" alt="Build B Screenshot" class="comparison-image" />
-          <div v-else class="placeholder">请选择要比较的图片</div>
+          <div v-else class="placeholder">Choose image B</div>
         </div>
       </div>
     </div>
 
-    <!-- 帧导航器 -->
     <div class="frame-navigator">
-      <button @click="prevFrame" :disabled="!hasPrevFrame">上一帧</button>
+      <button @click="prevFrame" :disabled="!hasPrevFrame">Last Frame</button>
       <div class="frame-thumbnails">
         <div
             v-for="frame in frames"
@@ -94,14 +92,13 @@
           {{ frame }}
         </div>
       </div>
-      <button @click="nextFrame" :disabled="!hasNextFrame">下一帧</button>
+      <button @click="nextFrame" :disabled="!hasNextFrame">Next Frame</button>
     </div>
   </section>
 </template>
 <script setup lang="ts">
 import {computed, onMounted, ref} from 'vue';
 
-// 状态变量
 const targets = ref([]);
 const builds = ref([]);
 const movies = ref([]);
@@ -116,9 +113,9 @@ const imageA = ref(null);
 const imageB = ref(null);
 const diffImage = ref(null);
 const diffStats = ref(null);
-const diffThreshold = ref(5); // 默认差异阈值5%
+const diffThreshold = ref(5);
 
-// 计算属性
+
 const hasPrevFrame = computed(() => {
   const currentIndex = frames.value.indexOf(selectedFrame.value);
   return currentIndex > 0;
@@ -129,7 +126,7 @@ const hasNextFrame = computed(() => {
   return currentIndex < frames.value.length - 1 && currentIndex !== -1;
 });
 
-// 方法
+
 const loadBuilds = async () => {
   try {
     const response = await fetch(`/api/builds?target=${selectedTarget.value}`);
@@ -137,7 +134,7 @@ const loadBuilds = async () => {
     selectedBuild.value = builds.value[0] || '';
     loadMovies();
   } catch (error) {
-    console.error('加载build失败:', error);
+    console.error('Failed Loading Build:', error);
   }
 };
 
@@ -148,7 +145,7 @@ const loadMovies = async () => {
     selectedMovie.value = movies.value[0] || '';
     loadFrames();
   } catch (error) {
-    console.error('加载movie失败:', error);
+    console.error('Failed Loading Movie:', error);
   }
 };
 
@@ -159,7 +156,7 @@ const loadFrames = async () => {
     selectedFrame.value = frames.value[0] || '';
     loadImages();
   } catch (error) {
-    console.error('加载frame失败:', error);
+    console.error('Failed Loading Frame:', error);
   }
 };
 
@@ -170,16 +167,16 @@ const loadImages = async () => {
   }
 
   try {
-    // 加载图片A
+    // Load PicA
     imageA.value = `/api/image?target=${selectedTarget.value}&build=${selectedBuild.value}&movie=${selectedMovie.value}&frame=${selectedFrame.value}`;
 
-    // 加载图片B
+    // Load PicB
     imageB.value = `/api/image?target=${selectedTarget.value}&build=${selectedBuild.value}&movie=${selectedMovie.value}&frame=${selectedFrame.value + 1}`;
 
-    // 自动生成差异图
+    // Generate Diff Pic
     generateDiff();
   } catch (error) {
-    console.error('加载图片失败:', error);
+    console.error('Failed loading image:', error);
   }
 };
 
@@ -204,7 +201,7 @@ const generateDiff = async () => {
       percentage: result.percentage
     };
   } catch (error) {
-    console.error('生成差异图失败:', error);
+    console.error('Failed Generating Diff Image:', error);
   }
 };
 
@@ -224,7 +221,6 @@ const nextFrame = () => {
   loadImages();
 };
 
-// 初始化
 onMounted(async () => {
   console.log('开始获取target')
   try {
@@ -234,7 +230,7 @@ onMounted(async () => {
       await loadBuilds();
     }
   } catch (error) {
-    console.error('初始化失败:', error);
+    console.error('Failed initialize:', error);
   }
 });
 </script>
