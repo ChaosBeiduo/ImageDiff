@@ -40,3 +40,4 @@ bun run dev
 
 Start the development server on `http://localhost:8000`:
 
+![image](https://github.com/user-attachments/assets/d27db012-b094-4c49-991c-362690c4aaff)
