@@ -154,8 +154,7 @@ const getFrameDiffUrl = (frame1, frame2) => {
     return frameDiffUrls.value[cacheKey];
   }
 
-  // Return a placeholder URL, actual image will be replaced after async loading
-  return '/placeholder-diff.png';  // You need to provide a placeholder image
+  return 'https://placehold.co/600x400?text=Waiting+for+diff...';
 };
 
 // Load build list
