@@ -1,22 +1,17 @@
-from fastapi import FastAPI, HTTPException, Query, Body, Request
-from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
+from fastapi import FastAPI, HTTPException, Body, Request
+from fastapi.responses import FileResponse, HTMLResponse, Response, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 import os
-import glob
-from typing import List, Dict, Any
+from typing import List
 import numpy as np
 from PIL import Image, ImageChops
-import io
-import time
-from pathlib import Path
-
 from config import SCREENSHOTS_DIR, DIFF_OUTPUT_DIR
 
 app = FastAPI(title="Director Screenshots Comparison API")
 
-# 允许跨域请求
+# Allow cross-origin requests
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -28,189 +23,222 @@ app.add_middleware(
 os.makedirs(DIFF_OUTPUT_DIR, exist_ok=True)
 
 app.mount("/diff_images", StaticFiles(directory=DIFF_OUTPUT_DIR), name="diff_images")
+app.mount("/screenshots", StaticFiles(directory=SCREENSHOTS_DIR), name="screenshots")
+
+
+# Define request models
+class TargetRequest(BaseModel):
+    pass  # Empty request body, as getting targets doesn't require parameters
+
+
+class BuildRequest(BaseModel):
+    target: str
+
+
+class MovieRequest(BaseModel):
+    target: str
+    build: str
+
+
+class FrameRequest(BaseModel):
+    target: str
+    build: str
+    movie: str
+
+
+class ImageRequest(BaseModel):
+    target: str
+    build: str
+    movie: str
+    frame: str
 
 
 class DiffRequest(BaseModel):
-    targetA: str
-    targetB: str
+    imageA: str  # Path to image A
+    imageB: str  # Path to image B
     threshold: float = 5.0
 
 
-@app.get("/api/targets", response_model=List[str])
-async def get_targets():
+@app.post("/api/targets", response_model=List[str])
+async def get_targets(request: TargetRequest = Body(default=None)):
     """Get all targets"""
     try:
         targets = [d for d in os.listdir(SCREENSHOTS_DIR)
-                  if os.path.isdir(os.path.join(SCREENSHOTS_DIR, d))]
+                   if os.path.isdir(os.path.join(SCREENSHOTS_DIR, d))]
         return targets
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"获取targets失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed getting targets: {str(e)}")
 
 
-@app.get("/api/builds", response_model=List[str])
-async def get_builds(target: str = Query(..., description="Target名称")):
-    """Get bundles from selected target"""
-    target_dir = os.path.join(SCREENSHOTS_DIR, target)
+@app.post("/api/builds", response_model=List[str])
+async def get_builds(request: BuildRequest):
+    """Get builds for a specified target"""
+    target_dir = os.path.join(SCREENSHOTS_DIR, request.target)
     if not os.path.exists(target_dir):
-        raise HTTPException(status_code=404, detail=f"Target '{target}' 不存在")
+        raise HTTPException(status_code=404, detail=f"Target '{request.target}' does not exist")
 
     try:
         builds = [d for d in os.listdir(target_dir)
-                 if os.path.isdir(os.path.join(target_dir, d))]
+                  if os.path.isdir(os.path.join(target_dir, d))]
 
         builds.sort(key=lambda x: int(x) if x.isdigit() else float('inf'))
         return builds
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"获取builds失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed getting builds: {str(e)}")
 
 
-@app.get("/api/movies", response_model=List[str])
-async def get_movies(target: str = Query(..., description="Target名称")):
-    """TODO: Get movies from selected bundle"""
+@app.post("/api/movies", response_model=List[str])
+async def get_movies(request: MovieRequest):
+    build_dir = os.path.join(SCREENSHOTS_DIR, request.target, request.build)
+    print(f"Looking for movies in: {build_dir}")
 
-    target_dir = os.path.join(SCREENSHOTS_DIR, target)
-    if not os.path.exists(target_dir):
-        raise HTTPException(status_code=404, detail=f"Target '{target}' 不存在")
+    if not os.path.exists(build_dir):
+        raise HTTPException(status_code=404, detail=f"Build path '{build_dir}' does not exist")
 
     try:
-        build_dirs = [d for d in os.listdir(target_dir)
-                     if os.path.isdir(os.path.join(target_dir, d))]
-
-        if not build_dirs:
-            return []
-
-        first_build_dir = os.path.join(target_dir, build_dirs[0])
-
-        # get movie's name
         movie_names = set()
-        for file in os.listdir(first_build_dir):
+        for file in os.listdir(build_dir):
             if file.endswith('.png'):
                 movie_name = file.rsplit('-', 1)[0]
                 movie_names.add(movie_name)
 
-        return sorted(list(movie_names))
+        result = sorted(list(movie_names))
+        print(f"Found movies: {result}")
+        return result
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"获取movies失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed getting movies: {str(e)}")
 
 
-@app.get("/api/frames", response_model=List[str])
-async def get_frames(
-    target: str = Query(..., description="Target名称"),
-    movie: str = Query(..., description="Movie名称")
-):
-    """TODO: Get movies from selected bundle and movie"""
-    target_dir = os.path.join(SCREENSHOTS_DIR, target)
-    if not os.path.exists(target_dir):
-        raise HTTPException(status_code=404, detail=f"Target '{target}' 不存在")
+@app.post("/api/frames", response_model=List[str])
+async def get_frames(request: FrameRequest):
+    """Get frames for a specified target, build, and movie"""
+    build_dir = os.path.join(SCREENSHOTS_DIR, request.target, request.build)
+    if not os.path.exists(build_dir):
+        raise HTTPException(status_code=404, detail=f"Build path '{build_dir}' does not exist")
 
     try:
-        build_dirs = [d for d in os.listdir(target_dir)
-                     if os.path.isdir(os.path.join(target_dir, d))]
-
-        if not build_dirs:
-            return []
-
-        first_build_dir = os.path.join(target_dir, build_dirs[0])
-
         frame_numbers = []
-        for file in os.listdir(first_build_dir):
-            if file.startswith(f"{movie}-") and file.endswith('.png'):
+        for file in os.listdir(build_dir):
+            if file.startswith(f"{request.movie}-") and file.endswith('.png'):
                 frame_number = file.rsplit('-', 1)[1].replace('.png', '')
                 frame_numbers.append(frame_number)
 
         frame_numbers.sort(key=lambda x: int(x) if x.isdigit() else x)
         return frame_numbers
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"获取frames失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed getting frames: {str(e)}")
 
-
-@app.get("/api/image")
-async def get_image(
-    target: str = Query(..., description="Target名称"),
-    build: str = Query(..., description="Build编号"),
-    movie: str = Query(..., description="Movie名称"),
-    frame: str = Query(..., description="Frame编号")
-):
-    """get selected pic"""
-    image_path = os.path.join(SCREENSHOTS_DIR, target, build, f"{movie}-{frame}.png")
+@app.post("/api/image")
+async def get_image(request: ImageRequest):
+    """Directly return the image file"""
+    image_path = os.path.join(SCREENSHOTS_DIR, request.target, request.build,
+                              f"{request.movie}-{request.frame}.png")
     if not os.path.exists(image_path):
-        raise HTTPException(status_code=404, detail=f"图片不存在: {image_path}")
+        raise HTTPException(status_code=404, detail=f"Image does not exist: {image_path}")
 
-    return FileResponse(image_path)
+    # Return the image file directly
+    return FileResponse(
+        image_path,
+        media_type="image/png",
+        filename=f"{request.movie}-{request.frame}.png"
+    )
 
 
-@app.post("/api/diff", response_model=Dict[str, Any])
+from fastapi.responses import FileResponse
+import io
+
+@app.post("/api/diff")
 async def generate_diff(request: DiffRequest):
-    """TODO: generate diff pic"""
+    """Generate a difference image from two image paths and return the image directly"""
     try:
-        # pic path
-        image_path_a = os.path.join(SCREENSHOTS_DIR, request.targetA)
-        image_path_b = os.path.join(SCREENSHOTS_DIR, request.targetB)
+        # Check if files exist
+        if not os.path.exists(request.imageA):
+            raise HTTPException(status_code=404, detail=f"Image A does not exist: {request.imageA}")
+        if not os.path.exists(request.imageB):
+            raise HTTPException(status_code=404, detail=f"Image B does not exist: {request.imageB}")
 
-        # check if exists
-        if not os.path.exists(image_path_a):
-            raise HTTPException(status_code=404, detail=f"图片A不存在: {image_path_a}")
-        if not os.path.exists(image_path_b):
-            raise HTTPException(status_code=404, detail=f"图片B不存在: {image_path_b}")
+        # Open images
+        image_a = Image.open(request.imageA).convert('RGB')
+        image_b = Image.open(request.imageB).convert('RGB')
 
-        # open pic
-        image_a = Image.open(image_path_a).convert('RGB')
-        image_b = Image.open(image_path_b).convert('RGB')
-
-        # resize pic to same size
+        # Resize images
         if image_a.size != image_b.size:
             width = min(image_a.width, image_b.width)
             height = min(image_a.height, image_b.height)
             image_a = image_a.resize((width, height))
             image_b = image_b.resize((width, height))
+        else:
+            width, height = image_a.size
 
-        # calc diff
+        # Calculate difference
         diff_image = ImageChops.difference(image_a, image_b)
 
-        # turn into numpy array
+        # Convert to numpy array
         diff_array = np.array(diff_image)
 
-        # calc pixel
+        # Calculate pixels
         threshold = int(255 * request.threshold / 100)
-        diff_mask = np.sum(diff_array, axis=2) > threshold
+
+        # Calculate total difference for each pixel (sum across RGB channels)
+        pixel_diff_sum = np.sum(diff_array, axis=2)
+
+        # Create difference mask (boolean array indicating which pixels differ beyond threshold)
+        diff_mask = pixel_diff_sum > threshold
+
+        # Count different pixels
         different_pixels = np.sum(diff_mask)
+
+        # Calculate total pixels
         total_pixels = diff_array.shape[0] * diff_array.shape[1]
+
+        # Calculate difference percentage
         diff_percentage = (different_pixels / total_pixels) * 100
 
-        # create diff pic
+        # Create array to highlight differences
         highlight = np.zeros_like(diff_array)
-        highlight[diff_mask] = [255, 0, 0]
+        highlight[diff_mask] = [255, 0, 0]  # Set different pixels to red
 
-        alpha = np.zeros_like(diff_array[..., 0])
-        alpha[diff_mask] = 200
-
+        # Create final difference image
         final_diff = image_b.copy()
         final_diff_array = np.array(final_diff)
-        for i in range(3):
-            channel = final_diff_array[..., i]
-            channel[diff_mask] = int(0.7 * channel[diff_mask] + 0.3 * highlight[diff_mask][..., i])
 
-        # turn array to pic
+        # Apply highlight to each channel
+        for i in range(3):
+            # Get current channel
+            channel = final_diff_array[..., i]
+            # Apply blend effect for masked pixels
+            if np.any(diff_mask):  # Ensure there are difference pixels
+                channel_values = channel[diff_mask]
+                highlight_values = highlight[diff_mask, i]
+                mixed_values = channel_values * 0.7 + highlight_values * 0.3
+                channel[diff_mask] = mixed_values.astype(np.uint8)
+
+        # Convert array back to image
         final_diff = Image.fromarray(final_diff_array)
 
-        timestamp = int(time.time())
-        diff_filename = f"diff_{timestamp}.png"
-        diff_path = os.path.join(DIFF_OUTPUT_DIR, diff_filename)
+        # Save image to memory
+        img_byte_arr = io.BytesIO()
+        final_diff.save(img_byte_arr, format='PNG')
+        img_byte_arr.seek(0)
 
-        # save
-        final_diff.save(diff_path)
-
-        # return results
-        return {
-            "diffImageUrl": f"/diff_images/{diff_filename}",
-            "differentPixels": int(different_pixels),
-            "percentage": float(diff_percentage),
-            "width": width,
-            "height": height
+        # Create response headers with difference statistics
+        headers = {
+            "X-Different-Pixels": str(int(different_pixels)),
+            "X-Difference-Percentage": str(float(diff_percentage)),
+            "X-Image-Width": str(int(width)),
+            "X-Image-Height": str(int(height))
         }
 
+        # Return the image directly
+        return Response(
+            content=img_byte_arr.getvalue(),
+            media_type="image/png",
+            headers=headers
+        )
+
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"生成差异图失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed Generating Diff Image: {str(e)}")
+
 
 @app.get("/", response_class=HTMLResponse)
 async def root():
