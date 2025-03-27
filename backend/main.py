@@ -40,6 +40,11 @@ class MovieRequest(BaseModel):
     build: str
 
 
+class BuildsByMovieRequest(BaseModel):
+    target: str
+    movie: str
+
+
 class FrameRequest(BaseModel):
     target: str
     build: str
@@ -81,6 +86,41 @@ async def get_builds(request: BuildRequest):
         raise HTTPException(status_code=500, detail=f"Failed getting builds: {str(e)}")
 
 
+@app.post("/api/builds-by-movie", response_model=List[str])
+async def get_builds_by_movie(request: BuildsByMovieRequest):
+    """Get builds that contain a specific movie"""
+    target_dir = os.path.join(SCREENSHOTS_DIR, request.target)
+    if not os.path.exists(target_dir):
+        raise HTTPException(status_code=404, detail=f"Target '{request.target}' does not exist")
+
+    try:
+        # Get all builds
+        all_builds = [d for d in os.listdir(target_dir)
+                      if os.path.isdir(os.path.join(target_dir, d))]
+
+        # Filter builds that contain the specified movie
+        builds_with_movie = []
+
+        for build in all_builds:
+            build_dir = os.path.join(target_dir, build)
+            movie_exists = False
+
+            # Check if any file in the build directory starts with the movie name
+            for file in os.listdir(build_dir):
+                if file.startswith(f"{request.movie}-") and file.endswith('.png'):
+                    movie_exists = True
+                    break
+
+            if movie_exists:
+                builds_with_movie.append(build)
+
+        # Sort builds numerically if possible
+        builds_with_movie.sort(key=lambda x: int(x) if x.isdigit() else float('inf'))
+        return builds_with_movie
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed getting builds for movie: {str(e)}")
+
+
 @app.post("/api/movies", response_model=List[str])
 async def get_movies(request: MovieRequest):
     build_dir = os.path.join(SCREENSHOTS_DIR, request.target, request.build)
@@ -103,6 +143,35 @@ async def get_movies(request: MovieRequest):
         raise HTTPException(status_code=500, detail=f"Failed getting movies: {str(e)}")
 
 
+@app.post("/api/all-movies", response_model=List[str])
+async def get_all_movies(request: BuildRequest):
+    """Get all movies across all builds for a specified target"""
+    target_dir = os.path.join(SCREENSHOTS_DIR, request.target)
+    if not os.path.exists(target_dir):
+        raise HTTPException(status_code=404, detail=f"Target '{request.target}' does not exist")
+
+    try:
+        # Get all builds
+        builds = [d for d in os.listdir(target_dir)
+                  if os.path.isdir(os.path.join(target_dir, d))]
+
+        # Collect movies from all builds
+        all_movies = set()
+
+        for build in builds:
+            build_dir = os.path.join(target_dir, build)
+
+            for file in os.listdir(build_dir):
+                if file.endswith('.png'):
+                    movie_name = file.rsplit('-', 1)[0]
+                    all_movies.add(movie_name)
+
+        result = sorted(list(all_movies))
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed getting all movies: {str(e)}")
+
+
 @app.post("/api/frames", response_model=List[str])
 async def get_frames(request: FrameRequest):
     """Get frames for a specified target, build, and movie"""
@@ -121,6 +190,7 @@ async def get_frames(request: FrameRequest):
         return frame_numbers
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed getting frames: {str(e)}")
+
 
 @app.post("/api/image")
 async def get_image(request: ImageRequest):
@@ -141,6 +211,7 @@ async def get_image(request: ImageRequest):
 @app.post("/api/diff")
 async def diff_endpoint(request: DiffRequest):
     return await generate_diff(request)
+
 
 @app.get("/", response_class=HTMLResponse)
 async def root():
@@ -167,9 +238,11 @@ async def root():
     """
     return html_content
 
+
 @app.get("/favicon.ico", include_in_schema=False)
 async def favicon():
     return Response(status_code=204)
+
 
 if __name__ == "__main__":
     import uvicorn
