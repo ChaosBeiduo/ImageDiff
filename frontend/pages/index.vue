@@ -74,7 +74,7 @@
       <div class="frames-grid">
         <template v-for="(frame, index) in frames" :key="frame">
           <!-- Build A Column -->
-          <div class="grid-cell" :class="{ 'has-diff': frameDiffs[frame] && frameDiffs[frame].percentage > 0 }">
+          <div class="grid-cell">
             <div class="frame-title">{{ selectedMovie }}-{{ frame }}</div>
             <img
                 :src="getFrameImageUrl(buildA, frame)"
@@ -106,7 +106,7 @@
           </div>
 
           <!-- Build B Column -->
-          <div class="grid-cell" :class="{ 'has-diff': frameDiffs[frame] && frameDiffs[frame].percentage > 0 }">
+          <div class="grid-cell">
             <div class="frame-title">{{ selectedMovie }}-{{ frame }}</div>
             <img
                 :src="getFrameImageUrl(buildB, frame)"
@@ -459,8 +459,6 @@ onMounted(async () => {
 header {
   text-align: center;
   background: white;
-  padding: 1rem;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
 }
 
 .image-comparison-container {
