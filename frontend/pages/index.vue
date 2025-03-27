@@ -1,7 +1,6 @@
 <template>
   <header>
     <h1>ImageDiff</h1>
-    <p>This is an screenshots comparison website</p>
   </header>
 
   <section class="image-comparison-container">
@@ -16,7 +15,7 @@
 
         <div class="selector">
           <label>Build:</label>
-          <select v-model="selectedBuild" @change="loadImages">
+          <select v-model="selectedBuild" @change="loadMovies">
             <option v-for="build in builds" :key="build" :value="build">{{ build }}</option>
           </select>
         </div>
@@ -27,77 +26,94 @@
             <option v-for="movie in movies" :key="movie" :value="movie">{{ movie }}</option>
           </select>
         </div>
-
-        <div class="selector">
-          <label>Frame:</label>
-          <select v-model="selectedFrame" @change="loadImages">
-            <option v-for="frame in frames" :key="frame" :value="frame">{{ frame }}</option>
-          </select>
-        </div>
       </div>
 
-      <div class="diff-controls">
+      <div class="diff-controls" style="display: none">
         <label>Diff Threshold:</label>
         <input type="range" v-model="diffThreshold" min="0" max="100" step="1" />
         <span>{{ diffThreshold }}%</span>
-        <button @click="generateDiff" class="diff-button">ReGenerate</button>
       </div>
     </div>
 
-    <div class="three-column-comparison">
-      <div class="column">
-        <div class="column-header">
-          <h3>Build {{ selectedBuild }}</h3>
-        </div>
-        <div class="image-wrapper">
-          <img v-if="imageA" :src="imageA" alt="Build A Screenshot" class="comparison-image" />
-          <div v-else class="placeholder">Choose image A</div>
-        </div>
-      </div>
-
-      <div class="column diff-column">
-        <div class="column-header">
-          <h3>Diff</h3>
-          <div v-if="diffStats" class="diff-stats">
-            <span>Diff Pixel: {{ diffStats.differentPixels }}</span>
-            <span>Diff Percentage: {{ diffStats.percentage.toFixed(2) }}%</span>
+    <!-- Display all frames in multiple rows -->
+    <div class="all-frames-grid">
+      <div
+          v-for="(frame, index) in frames"
+          :key="frame"
+          class="frame-comparison-row"
+      >
+        <!-- Current frame image -->
+        <div class="column">
+          <div class="column-header">
+            <h3>{{ selectedBuild }}-{{ selectedMovie }}-{{ frame }}</h3>
+          </div>
+          <div class="image-wrapper">
+            <img
+                :src="getFrameImageUrl(frame)"
+                :alt="`${selectedMovie}-${frame}`"
+                class="comparison-image"
+            />
           </div>
         </div>
-        <div class="image-wrapper">
-          <img v-if="diffImage" :src="diffImage" alt="Difference Image" class="comparison-image" />
-          <div v-else class="placeholder">Waiting for diff..</div>
-        </div>
-      </div>
 
-      <div class="column">
-        <div class="column-header">
-          <h3>Build {{ selectedBuild }}</h3>
+        <!-- Difference between current and next frame -->
+        <div class="column diff-column">
+          <div class="column-header">
+            <h3>Diff</h3>
+          </div>
+          <div class="image-wrapper">
+            <div v-if="index < frames.length - 1">
+              <div class="diff-stats" v-if="frameDiffs[frame]">
+                <template v-if="frameDiffs[frame].differentPixels > 0">
+                  <span>Diff: {{ frameDiffs[frame].percentage.toFixed(2) }}%</span>
+                </template>
+                <template v-else>
+                  <span>No Diff</span>
+                </template>
+              </div>
+              <img
+                  :src="getFrameDiffUrl(frame, frames[index + 1])"
+                  :alt="`Diff ${frame}-${frames[index + 1]}`"
+                  class="comparison-image"
+                  @click="regenerateDiff(frame, frames[index + 1])"
+              />
+            </div>
+            <div v-else class="no-diff-placeholder">
+              <div class="diff-stats">
+                <span>No comparison frame</span>
+              </div>
+              <div class="placeholder-image">
+                <p>This is the last frame</p>
+              </div>
+            </div>
+          </div>
         </div>
-        <div class="image-wrapper">
-          <img v-if="imageB" :src="imageB" alt="Build B Screenshot" class="comparison-image" />
-          <div v-else class="placeholder">Choose image B</div>
-        </div>
-      </div>
-    </div>
 
-    <div class="frame-navigator">
-      <button @click="prevFrame" :disabled="!hasPrevFrame">Last Frame</button>
-      <div class="frame-thumbnails">
-        <div
-            v-for="frame in frames"
-            :key="frame"
-            :class="['frame-thumbnail', { active: frame === selectedFrame }]"
-            @click="selectedFrame = frame; loadImages()"
-        >
-          {{ frame }}
+        <!-- Next frame image -->
+        <div class="column">
+          <div class="column-header">
+            <h3 v-if="index < frames.length - 1">{{ selectedBuild }}-{{ selectedMovie }}-{{ frames[index + 1] }}</h3>
+            <h3 v-else>Next Frame</h3>
+          </div>
+          <div class="image-wrapper">
+            <img
+                v-if="index < frames.length - 1"
+                :src="getFrameImageUrl(frames[index + 1])"
+                :alt="`${selectedMovie}-${frames[index + 1]}`"
+                class="comparison-image"
+            />
+            <div v-else class="placeholder-image">
+              <p>No next frame</p>
+            </div>
+          </div>
         </div>
       </div>
-      <button @click="nextFrame" :disabled="!hasNextFrame">Next Frame</button>
     </div>
   </section>
 </template>
-<script setup lang="ts">
-import {computed, onMounted, ref} from 'vue';
+
+<script setup>
+import { ref, onMounted, computed } from 'vue';
 
 const targets = ref([]);
 const builds = ref([]);
@@ -107,29 +123,53 @@ const frames = ref([]);
 const selectedTarget = ref('');
 const selectedBuild = ref('');
 const selectedMovie = ref('');
-const selectedFrame = ref('');
 
-const imageA = ref(null);
-const imageB = ref(null);
-const diffImage = ref(null);
-const diffStats = ref(null);
 const diffThreshold = ref(5);
 
+// For storing frame difference data
+const frameDiffs = ref({});
+// For caching image URLs
+const frameImageUrls = ref({});
+const frameDiffUrls = ref({});
 
-const hasPrevFrame = computed(() => {
-  const currentIndex = frames.value.indexOf(selectedFrame.value);
-  return currentIndex > 0;
-});
+// Get image URL for a specific frame (with caching)
+const getFrameImageUrl = (frame) => {
+  const cacheKey = `${selectedTarget.value}-${selectedBuild.value}-${selectedMovie.value}-${frame}`;
 
-const hasNextFrame = computed(() => {
-  const currentIndex = frames.value.indexOf(selectedFrame.value);
-  return currentIndex < frames.value.length - 1 && currentIndex !== -1;
-});
+  // If URL is already cached, return it
+  if (frameImageUrls.value[cacheKey]) {
+    return frameImageUrls.value[cacheKey];
+  }
 
+  // Otherwise, construct a temporary URL (will be replaced with async loaded one)
+  return `/screenshots/${selectedTarget.value}/${selectedBuild.value}/${selectedMovie.value}-${frame}.png`;
+};
 
+// Get URL for difference image between two frames (with caching)
+const getFrameDiffUrl = (frame1, frame2) => {
+  const cacheKey = `${selectedTarget.value}-${selectedBuild.value}-${selectedMovie.value}-${frame1}-${frame2}`;
+
+  // If URL is already cached, return it
+  if (frameDiffUrls.value[cacheKey]) {
+    return frameDiffUrls.value[cacheKey];
+  }
+
+  // Return a placeholder URL, actual image will be replaced after async loading
+  return '/placeholder-diff.png';  // You need to provide a placeholder image
+};
+
+// Load build list
 const loadBuilds = async () => {
   try {
-    const response = await fetch(`/api/builds?target=${selectedTarget.value}`);
+    const response = await fetch('/api/builds', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        target: selectedTarget.value
+      })
+    });
     builds.value = await response.json();
     selectedBuild.value = builds.value[0] || '';
     loadMovies();
@@ -138,9 +178,19 @@ const loadBuilds = async () => {
   }
 };
 
+// Load movie list
 const loadMovies = async () => {
   try {
-    const response = await fetch(`/api/movies?target=${selectedTarget.value}`);
+    const response = await fetch('/api/movies', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        target: selectedTarget.value,
+        build: selectedBuild.value
+      })
+    });
     movies.value = await response.json();
     selectedMovie.value = movies.value[0] || '';
     loadFrames();
@@ -149,82 +199,131 @@ const loadMovies = async () => {
   }
 };
 
+// Load frame list and preload images for each frame
 const loadFrames = async () => {
   try {
-    const response = await fetch(`/api/frames?target=${selectedTarget.value}&movie=${selectedMovie.value}`);
+    // Clear cache
+    frameImageUrls.value = {};
+    frameDiffUrls.value = {};
+    frameDiffs.value = {};
+
+    const response = await fetch('/api/frames', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        target: selectedTarget.value,
+        build: selectedBuild.value,
+        movie: selectedMovie.value
+      })
+    });
     frames.value = await response.json();
-    selectedFrame.value = frames.value[0] || '';
-    loadImages();
+
+    if (frames.value.length > 0) {
+      // Preload all frame images and diff images
+      preloadFrameImages();
+      generateAllDiffs();
+    }
   } catch (error) {
-    console.error('Failed Loading Frame:', error);
+    console.error('Failed Loading Frames:', error);
   }
 };
 
-const loadImages = async () => {
-  if (!selectedTarget.value || !selectedBuild.value ||
-      !selectedMovie.value || !selectedFrame.value) {
-    return;
-  }
-
-  try {
-    // Load PicA
-    imageA.value = `/api/image?target=${selectedTarget.value}&build=${selectedBuild.value}&movie=${selectedMovie.value}&frame=${selectedFrame.value}`;
-
-    // Load PicB
-    imageB.value = `/api/image?target=${selectedTarget.value}&build=${selectedBuild.value}&movie=${selectedMovie.value}&frame=${selectedFrame.value + 1}`;
-
-    // Generate Diff Pic
-    generateDiff();
-  } catch (error) {
-    console.error('Failed loading image:', error);
+// Preload images for all frames
+const preloadFrameImages = async () => {
+  for (const frame of frames.value) {
+    loadFrameImage(frame);
   }
 };
 
-const generateDiff = async () => {
+// Load image for a single frame
+const loadFrameImage = async (frame) => {
   try {
+    const response = await fetch('/api/image', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        target: selectedTarget.value,
+        build: selectedBuild.value,
+        movie: selectedMovie.value,
+        frame: frame
+      })
+    });
+
+    if (response.ok) {
+      const blob = await response.blob();
+      const imageUrl = URL.createObjectURL(blob);
+
+      // Cache image URL
+      const cacheKey = `${selectedTarget.value}-${selectedBuild.value}-${selectedMovie.value}-${frame}`;
+      frameImageUrls.value[cacheKey] = imageUrl;
+    }
+  } catch (error) {
+    console.error(`Failed loading image for frame ${frame}:`, error);
+  }
+};
+
+// Generate difference images for all consecutive frames
+const generateAllDiffs = async () => {
+  for (let i = 0; i < frames.value.length - 1; i++) {
+    const currentFrame = frames.value[i];
+    const nextFrame = frames.value[i + 1];
+    generateDiff(currentFrame, nextFrame);
+  }
+};
+
+// Generate difference image between two frames
+const generateDiff = async (frame1, frame2) => {
+  try {
+    const imagePathA = `../screenshots/${selectedTarget.value}/${selectedBuild.value}/${selectedMovie.value}-${frame1}.png`;
+    const imagePathB = `../screenshots/${selectedTarget.value}/${selectedBuild.value}/${selectedMovie.value}-${frame2}.png`;
+
     const response = await fetch('/api/diff', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        targetA: `${selectedTarget.value}/${selectedBuild.value}/${selectedMovie.value}-${selectedFrame.value}.png`,
-        targetB: `${selectedTarget.value}/${selectedBuild.value}/${selectedMovie.value}-${selectedFrame.value + 1}.png`,
+        imageA: imagePathA,
+        imageB: imagePathB,
         threshold: diffThreshold.value
       })
     });
 
-    const result = await response.json();
-    diffImage.value = result.diffImageUrl;
-    diffStats.value = {
-      differentPixels: result.differentPixels,
-      percentage: result.percentage
-    };
+    if (response.ok) {
+      // Get difference statistics from response headers
+      const differentPixels = parseInt(response.headers.get('X-Different-Pixels') || '0');
+      const percentage = parseFloat(response.headers.get('X-Difference-Percentage') || '0');
+
+      // Store difference statistics
+      frameDiffs.value[frame1] = {
+        differentPixels,
+        percentage
+      };
+
+      // Get difference image and store URL
+      const blob = await response.blob();
+      const diffUrl = URL.createObjectURL(blob);
+
+      const cacheKey = `${selectedTarget.value}-${selectedBuild.value}-${selectedMovie.value}-${frame1}-${frame2}`;
+      frameDiffUrls.value[cacheKey] = diffUrl;
+    }
   } catch (error) {
-    console.error('Failed Generating Diff Image:', error);
+    console.error(`Failed generating diff between frames ${frame1} and ${frame2}:`, error);
   }
 };
 
-const prevFrame = () => {
-  if (!hasPrevFrame.value) return;
-
-  const currentIndex = frames.value.indexOf(selectedFrame.value);
-  selectedFrame.value = frames.value[currentIndex - 1];
-  loadImages();
-};
-
-const nextFrame = () => {
-  if (!hasNextFrame.value) return;
-
-  const currentIndex = frames.value.indexOf(selectedFrame.value);
-  selectedFrame.value = frames.value[currentIndex + 1];
-  loadImages();
-};
-
 onMounted(async () => {
-  console.log('开始获取target')
+  console.log('Starting to fetch targets');
   try {
-    targets.value = await $fetch("/api/targets");
+    const response = await fetch('/api/targets', {
+      method: 'POST'
+    });
+    targets.value = await response.json();
+
     if (targets.value.length > 0) {
       selectedTarget.value = targets.value[0];
       await loadBuilds();
@@ -242,17 +341,15 @@ header{
 }
 
 .image-comparison-container {
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
+  max-width: 1600px;
+  margin: 0 auto;
   padding: 20px;
-  max-width: 100%;
 }
 
 .control-panel {
   display: flex;
-  flex-wrap: wrap;
-  gap: 15px;
+  justify-content: space-between;
+  margin-bottom: 20px;
   padding: 15px;
   background-color: #f5f5f5;
   border-radius: 8px;
@@ -260,21 +357,17 @@ header{
 
 .selectors {
   display: flex;
-  flex-wrap: wrap;
   gap: 15px;
-  flex: 1;
 }
 
 .selector {
   display: flex;
-  align-items: center;
-  gap: 8px;
+  flex-direction: column;
 }
 
-.selector select {
-  padding: 8px;
-  border-radius: 4px;
-  border: 1px solid #ccc;
+.selector label {
+  margin-bottom: 5px;
+  font-weight: bold;
 }
 
 .diff-controls {
@@ -283,100 +376,108 @@ header{
   gap: 10px;
 }
 
-.diff-button {
-  padding: 8px 12px;
-  background-color: #4a90e2;
-  color: white;
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
+.all-frames-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 30px;
 }
 
-.diff-button:hover {
-  background-color: #357ab8;
-}
-
-.three-column-comparison {
+.frame-comparison-row {
   display: flex;
   gap: 10px;
-  height: 70vh;
+  border: 1px solid #ddd;
+  padding: 15px;
+  border-radius: 8px;
+  background-color: #f9f9f9;
 }
 
 .column {
   flex: 1;
   display: flex;
   flex-direction: column;
-  border: 1px solid #ddd;
-  border-radius: 8px;
-  overflow: hidden;
+  align-items: center;
 }
 
 .column-header {
-  padding: 10px;
-  background-color: #f0f0f0;
-  border-bottom: 1px solid #ddd;
+  width: 100%;
+  text-align: center;
+  margin-bottom: 10px;
+  height: 40px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
 }
 
 .column-header h3 {
   margin: 0;
-  font-size: 16px;
+  font-size: 14px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+.diff-column {
+  position: relative;
 }
 
 .diff-stats {
-  display: flex;
-  gap: 15px;
+  background-color: rgba(0, 0, 0, 0.7);
+  color: white;
+  padding: 2px 8px;
+  border-radius: 4px;
   font-size: 12px;
-  margin-top: 5px;
+  position: absolute;
+  top: 10px;
+  z-index: 1;
 }
 
 .image-wrapper {
-  flex: 1;
-  overflow: auto;
+  width: 100%;
   display: flex;
+  flex-direction: column;
   justify-content: center;
-  align-items: flex-start;
-  background-color: #f8f8f8;
+  align-items: center;
+  position: relative;
 }
 
 .comparison-image {
-  max-width: 100%;
+  width: 100%;
+  height: 300px;
   object-fit: contain;
+  border: 1px solid #ccc;
+  background-color: white;
 }
 
-.placeholder {
+.placeholder-image {
+  width: 100%;
+  height: 300px;
   display: flex;
   justify-content: center;
   align-items: center;
-  height: 100%;
-  color: #888;
+  background-color: #f0f0f0;
+  border: 1px solid #ccc;
+  color: #666;
+  font-size: 16px;
+  font-weight: bold;
 }
 
-.frame-navigator {
-  display: flex;
-  align-items: center;
-  gap: 10px;
+.no-diff-placeholder {
+  width: 100%;
+  position: relative;
 }
 
-.frame-thumbnails {
-  display: flex;
-  overflow-x: auto;
-  gap: 5px;
-  flex: 1;
-  padding: 5px 0;
-}
-
-.frame-thumbnail {
+button {
+  margin-top: 10px;
   padding: 5px 10px;
-  border: 1px solid #ddd;
+  background-color: #4CAF50;
+  color: white;
+  border: none;
   border-radius: 4px;
   cursor: pointer;
-  min-width: 30px;
-  text-align: center;
 }
 
-.frame-thumbnail.active {
-  background-color: #4a90e2;
-  color: white;
-  border-color: #4a90e2;
+button:hover {
+  background-color: #45a049;
 }
 </style>
