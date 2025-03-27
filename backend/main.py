@@ -5,9 +5,9 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 import os
 from typing import List
-import numpy as np
-from PIL import Image, ImageChops
 from config import SCREENSHOTS_DIR, DIFF_OUTPUT_DIR
+# Import the diff generator function
+from diff_generator import generate_diff, DiffRequest
 
 app = FastAPI(title="Director Screenshots Comparison API")
 
@@ -40,6 +40,11 @@ class MovieRequest(BaseModel):
     build: str
 
 
+class BuildsByMovieRequest(BaseModel):
+    target: str
+    movie: str
+
+
 class FrameRequest(BaseModel):
     target: str
     build: str
@@ -51,12 +56,6 @@ class ImageRequest(BaseModel):
     build: str
     movie: str
     frame: str
-
-
-class DiffRequest(BaseModel):
-    imageA: str  # Path to image A
-    imageB: str  # Path to image B
-    threshold: float = 5.0
 
 
 @app.post("/api/targets", response_model=List[str])
@@ -87,6 +86,41 @@ async def get_builds(request: BuildRequest):
         raise HTTPException(status_code=500, detail=f"Failed getting builds: {str(e)}")
 
 
+@app.post("/api/builds-by-movie", response_model=List[str])
+async def get_builds_by_movie(request: BuildsByMovieRequest):
+    """Get builds that contain a specific movie"""
+    target_dir = os.path.join(SCREENSHOTS_DIR, request.target)
+    if not os.path.exists(target_dir):
+        raise HTTPException(status_code=404, detail=f"Target '{request.target}' does not exist")
+
+    try:
+        # Get all builds
+        all_builds = [d for d in os.listdir(target_dir)
+                      if os.path.isdir(os.path.join(target_dir, d))]
+
+        # Filter builds that contain the specified movie
+        builds_with_movie = []
+
+        for build in all_builds:
+            build_dir = os.path.join(target_dir, build)
+            movie_exists = False
+
+            # Check if any file in the build directory starts with the movie name
+            for file in os.listdir(build_dir):
+                if file.startswith(f"{request.movie}-") and file.endswith('.png'):
+                    movie_exists = True
+                    break
+
+            if movie_exists:
+                builds_with_movie.append(build)
+
+        # Sort builds numerically if possible
+        builds_with_movie.sort(key=lambda x: int(x) if x.isdigit() else float('inf'))
+        return builds_with_movie
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed getting builds for movie: {str(e)}")
+
+
 @app.post("/api/movies", response_model=List[str])
 async def get_movies(request: MovieRequest):
     build_dir = os.path.join(SCREENSHOTS_DIR, request.target, request.build)
@@ -109,6 +143,35 @@ async def get_movies(request: MovieRequest):
         raise HTTPException(status_code=500, detail=f"Failed getting movies: {str(e)}")
 
 
+@app.post("/api/all-movies", response_model=List[str])
+async def get_all_movies(request: BuildRequest):
+    """Get all movies across all builds for a specified target"""
+    target_dir = os.path.join(SCREENSHOTS_DIR, request.target)
+    if not os.path.exists(target_dir):
+        raise HTTPException(status_code=404, detail=f"Target '{request.target}' does not exist")
+
+    try:
+        # Get all builds
+        builds = [d for d in os.listdir(target_dir)
+                  if os.path.isdir(os.path.join(target_dir, d))]
+
+        # Collect movies from all builds
+        all_movies = set()
+
+        for build in builds:
+            build_dir = os.path.join(target_dir, build)
+
+            for file in os.listdir(build_dir):
+                if file.endswith('.png'):
+                    movie_name = file.rsplit('-', 1)[0]
+                    all_movies.add(movie_name)
+
+        result = sorted(list(all_movies))
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed getting all movies: {str(e)}")
+
+
 @app.post("/api/frames", response_model=List[str])
 async def get_frames(request: FrameRequest):
     """Get frames for a specified target, build, and movie"""
@@ -128,6 +191,7 @@ async def get_frames(request: FrameRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed getting frames: {str(e)}")
 
+
 @app.post("/api/image")
 async def get_image(request: ImageRequest):
     """Directly return the image file"""
@@ -144,100 +208,9 @@ async def get_image(request: ImageRequest):
     )
 
 
-from fastapi.responses import FileResponse
-import io
-
 @app.post("/api/diff")
-async def generate_diff(request: DiffRequest):
-    """Generate a difference image from two image paths and return the image directly"""
-    try:
-        # Check if files exist
-        if not os.path.exists(request.imageA):
-            raise HTTPException(status_code=404, detail=f"Image A does not exist: {request.imageA}")
-        if not os.path.exists(request.imageB):
-            raise HTTPException(status_code=404, detail=f"Image B does not exist: {request.imageB}")
-
-        # Open images
-        image_a = Image.open(request.imageA).convert('RGB')
-        image_b = Image.open(request.imageB).convert('RGB')
-
-        # Resize images
-        if image_a.size != image_b.size:
-            width = min(image_a.width, image_b.width)
-            height = min(image_a.height, image_b.height)
-            image_a = image_a.resize((width, height))
-            image_b = image_b.resize((width, height))
-        else:
-            width, height = image_a.size
-
-        # Calculate difference
-        diff_image = ImageChops.difference(image_a, image_b)
-
-        # Convert to numpy array
-        diff_array = np.array(diff_image)
-
-        # Calculate pixels
-        threshold = int(255 * request.threshold / 100)
-
-        # Calculate total difference for each pixel (sum across RGB channels)
-        pixel_diff_sum = np.sum(diff_array, axis=2)
-
-        # Create difference mask (boolean array indicating which pixels differ beyond threshold)
-        diff_mask = pixel_diff_sum > threshold
-
-        # Count different pixels
-        different_pixels = np.sum(diff_mask)
-
-        # Calculate total pixels
-        total_pixels = diff_array.shape[0] * diff_array.shape[1]
-
-        # Calculate difference percentage
-        diff_percentage = (different_pixels / total_pixels) * 100
-
-        # Create array to highlight differences
-        highlight = np.zeros_like(diff_array)
-        highlight[diff_mask] = [255, 0, 0]  # Set different pixels to red
-
-        # Create final difference image
-        final_diff = image_b.copy()
-        final_diff_array = np.array(final_diff)
-
-        # Apply highlight to each channel
-        for i in range(3):
-            # Get current channel
-            channel = final_diff_array[..., i]
-            # Apply blend effect for masked pixels
-            if np.any(diff_mask):  # Ensure there are difference pixels
-                channel_values = channel[diff_mask]
-                highlight_values = highlight[diff_mask, i]
-                mixed_values = channel_values * 0.7 + highlight_values * 0.3
-                channel[diff_mask] = mixed_values.astype(np.uint8)
-
-        # Convert array back to image
-        final_diff = Image.fromarray(final_diff_array)
-
-        # Save image to memory
-        img_byte_arr = io.BytesIO()
-        final_diff.save(img_byte_arr, format='PNG')
-        img_byte_arr.seek(0)
-
-        # Create response headers with difference statistics
-        headers = {
-            "X-Different-Pixels": str(int(different_pixels)),
-            "X-Difference-Percentage": str(float(diff_percentage)),
-            "X-Image-Width": str(int(width)),
-            "X-Image-Height": str(int(height))
-        }
-
-        # Return the image directly
-        return Response(
-            content=img_byte_arr.getvalue(),
-            media_type="image/png",
-            headers=headers
-        )
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed Generating Diff Image: {str(e)}")
+async def diff_endpoint(request: DiffRequest):
+    return await generate_diff(request)
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -265,9 +238,11 @@ async def root():
     """
     return html_content
 
+
 @app.get("/favicon.ico", include_in_schema=False)
 async def favicon():
     return Response(status_code=204)
+
 
 if __name__ == "__main__":
     import uvicorn
