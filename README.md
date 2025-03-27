@@ -1,3 +1,5 @@
+# ImageDiff
+![image](https://github.com/user-attachments/assets/ad1f9547-0376-4c43-95f2-9b08a464eb94)
 ## Screenshots
 Extract the 7z archives in the screenshots folder
 
@@ -39,5 +41,3 @@ bun run dev
 ### Development Server
 
 Start the development server on `http://localhost:8000`:
-
-![image](https://github.com/user-attachments/assets/d27db012-b094-4c49-991c-362690c4aaff)
