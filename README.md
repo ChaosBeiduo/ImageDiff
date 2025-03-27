@@ -39,5 +39,4 @@ bun run dev
 
 ## BackEnd
 ### Development Server
-
-Start the development server on `http://localhost:8000`:
+run`main.python` to start the development server on `http://localhost:8000`:
